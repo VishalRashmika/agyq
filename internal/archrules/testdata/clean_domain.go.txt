@@ -1,0 +1,9 @@
+package domain
+
+import (
+	"strings"
+	"time"
+)
+
+var _ = strings.TrimSpace
+var _ = time.Second

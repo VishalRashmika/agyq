@@ -1,0 +1,46 @@
+{
+  "queue_file": "queue.md",
+  "work_dir": ".",
+  "state_dir": ".agyq",
+  "prompt_timeout": "90m",
+  "recovery": "resume",
+  "on_failure": "stop",
+  "agy": {
+    "binary": "agy",
+    "model": "gemini-3.8-flash-high",
+    "effort": "high",
+    "permission_mode": "dangerously-skip-permissions",
+    "success_statuses": ["SUCCESS"],
+    "use_pty": false
+  },
+  "retry": {
+    "max_attempts": 3,
+    "backoff": ["1m", "5m", "15m"]
+  },
+  "limits": {
+    "patterns": [
+      "quota",
+      "rate limit",
+      "usage limit",
+      "resource[_ ]exhausted",
+      "429",
+      "limit reached",
+      "exceeded your",
+      "try again (in|after|at)"
+    ],
+    "exit_codes": [],
+    "status_values": ["RESOURCE_EXHAUSTED", "QUOTA_EXCEEDED", "RATE_LIMITED"],
+    "weekly_hint": ["weekly", "per week", "7 day"],
+    "reset_regexes": [
+      "(?i)reset[s]? (?:at|on) (?P<abs>[^.\\n]+)",
+      "(?i)(?:in|after) (?P<rel>(?:\\d+\\s*(?:d|day|days|h|hr|hrs|hour|hours|m|min|mins|minute|minutes)\\s*(?:and\\s*)?)+)"
+    ],
+    "timezone": "UTC",
+    "fallback": {
+      "session_probe": "30m",
+      "weekly_probe": "3h",
+      "jitter": 0.1,
+      "max_total": "192h"
+    }
+  }
+}

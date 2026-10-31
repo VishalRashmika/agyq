@@ -1,0 +1,3 @@
+package infrastructure
+
+import _ "agyq/internal/presentation"

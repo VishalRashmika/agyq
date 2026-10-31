@@ -1,0 +1,14 @@
+package infrastructure
+
+import (
+	"os"
+	"os/exec"
+
+	"agyq/internal/application"
+	"agyq/internal/domain"
+)
+
+var _ = os.Args
+var _ = exec.Command
+var _ application.Clock
+var _ domain.Status

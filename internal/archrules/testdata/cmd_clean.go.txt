@@ -1,0 +1,8 @@
+package main
+
+import (
+	_ "agyq/internal/application"
+	_ "agyq/internal/domain"
+	_ "agyq/internal/infrastructure"
+	_ "agyq/internal/presentation"
+)

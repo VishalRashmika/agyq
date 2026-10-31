@@ -1,0 +1,32 @@
+# Build artifacts & binaries
+/agyq
+/bin/
+*.test
+*.out
+coverage.txt
+.DS_Store
+
+# Runtime state & transcripts
+.agyq/
+
+# Internal project tracking & agent builder instructions
+PROJECT-STATE.md
+AGENTS.md
+GEMINI.md
+
+# Internal architecture, specifications, & development roadmap
+docs/00-VISION-AND-PRINCIPLES.md
+docs/01-ARCHITECTURE.md
+docs/02-DOMAIN-MODEL.md
+docs/03-FEATURE-CATALOG.md
+docs/04-PHASED-ROADMAP.md
+docs/05-AGY-INTEGRATION-SPEC.md
+docs/06-RECOVERY-AND-STATE-SPEC.md
+docs/07-QUEUE-FORMAT-SPEC.md
+docs/09-TESTING-AND-COMPLIANCE.md
+docs/10-AGENT-WORKFLOW.md
+docs/evidence/
+docs/spikes/
+
+# Internal test & simulation scripts
+scripts/

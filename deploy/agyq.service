@@ -1,0 +1,21 @@
+[Unit]
+Description=agyq - sequential prompt queue runner for Antigravity CLI
+Documentation=https://github.com/google/agyq
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=agyq
+Group=agyq
+WorkingDirectory=/var/lib/agyq
+ExecStart=/usr/local/bin/agyq run --config /etc/agyq/agyq.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

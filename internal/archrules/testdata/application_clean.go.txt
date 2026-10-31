@@ -1,0 +1,12 @@
+package application
+
+import (
+	"context"
+	"time"
+
+	"agyq/internal/domain"
+)
+
+var _ context.Context
+var _ time.Duration
+var _ domain.Status
