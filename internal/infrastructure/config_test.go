@@ -320,6 +320,54 @@ func TestEnsureGitIgnore(t *testing.T) {
 	}
 }
 
+func TestEnsureAgyqGitIgnore(t *testing.T) {
+	tmp := t.TempDir()
+	// Non-git directory -> no-op
+	if err := EnsureAgyqGitIgnore(tmp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatal("expected no .gitignore in non-git directory")
+	}
+
+	// Git directory
+	if err := os.Mkdir(filepath.Join(tmp, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureAgyqGitIgnore(tmp); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(tmp, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	str := string(data)
+	if !strings.Contains(str, ".agyq/") {
+		t.Errorf("missing .agyq/ in .gitignore")
+	}
+	if !strings.Contains(str, "queue.md") {
+		t.Errorf("missing queue.md in .gitignore")
+	}
+	if !strings.Contains(str, "errors.log") {
+		t.Errorf("missing errors.log in .gitignore")
+	}
+	if !strings.Contains(str, "agyq.json") {
+		t.Errorf("missing agyq.json in .gitignore")
+	}
+
+	// Idempotency
+	if err := EnsureAgyqGitIgnore(tmp); err != nil {
+		t.Fatal(err)
+	}
+	data2, err := os.ReadFile(filepath.Join(tmp, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(data2) {
+		t.Errorf("expected idempotent .gitignore, got diff")
+	}
+}
+
 func TestLoadConfigOrDefault_ZeroConfig(t *testing.T) {
 	origWd, _ := os.Getwd()
 	tmp := t.TempDir()

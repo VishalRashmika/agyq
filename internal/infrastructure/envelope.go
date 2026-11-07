@@ -23,31 +23,60 @@ func ParseEnvelope(data []byte) *application.Envelope {
 		return &env
 	}
 
-	// Scan backwards for potential JSON objects: find matching '{' and '}'
-	// Spec rule (05 §3): "take the last top-level JSON object in the stream"
-	var candidate *application.Envelope
+	var lastCandidate *application.Envelope
 
-	// Find the positions of '{' and '}'
-	for i := len(data) - 1; i >= 0; i-- {
-		if data[i] == '}' {
-			// Search backwards for the corresponding '{'
-			depth := 0
-			for j := i; j >= 0; j-- {
-				if data[j] == '}' {
-					depth++
-				} else if data[j] == '{' {
-					depth--
-					if depth == 0 {
-						// Candidate JSON slice data[j : i+1]
-						var candidateEnv application.Envelope
-						if err := json.Unmarshal(data[j:i+1], &candidateEnv); err == nil && candidateEnv.Status != "" {
-							return &candidateEnv
-						}
+	// Scan through data finding top-level JSON objects.
+	// For every '{' outside string literals, scan forward tracking
+	// braces and string escape sequences so that '{' and '}' inside
+	// strings (e.g. in code snippets, regex, diffs) do not alter depth.
+	for i := 0; i < len(data); i++ {
+		if data[i] != '{' {
+			continue
+		}
+
+		depth := 0
+		inString := false
+		escapeCount := 0
+		matchedEnd := -1
+
+		for j := i; j < len(data); j++ {
+			b := data[j]
+			if inString {
+				if b == '\\' {
+					escapeCount++
+				} else {
+					if b == '"' && escapeCount%2 == 0 {
+						inString = false
 					}
+					escapeCount = 0
 				}
+				continue
+			}
+
+			// Outside string literal
+			if b == '"' {
+				inString = true
+				escapeCount = 0
+			} else if b == '{' {
+				depth++
+			} else if b == '}' {
+				depth--
+				if depth == 0 {
+					matchedEnd = j
+					break
+				}
+			}
+		}
+
+		if matchedEnd > i {
+			candidateSlice := data[i : matchedEnd+1]
+			var candidateEnv application.Envelope
+			if err := json.Unmarshal(candidateSlice, &candidateEnv); err == nil && candidateEnv.Status != "" {
+				lastCandidate = &candidateEnv
+				i = matchedEnd
 			}
 		}
 	}
 
-	return candidate
+	return lastCandidate
 }

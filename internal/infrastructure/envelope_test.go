@@ -96,6 +96,30 @@ func TestParseEnvelope_MalformedAndFuzz(t *testing.T) {
 			input:   []byte(`{ { "status": SUCCESS`),
 			wantNil: true,
 		},
+		{
+			name:       "envelope with curly braces inside code response string surrounded by logs",
+			input:      []byte("info: starting up\n{\"conversation_id\":\"c9\",\"status\":\"SUCCESS\",\"response\":\"function test() { return { x: 1 }; }\"}\ninfo: done"),
+			wantNil:    false,
+			wantStatus: "SUCCESS",
+		},
+		{
+			name:       "envelope with unmatched single closing brace in string response surrounded by logs",
+			input:      []byte("warning: check\n{\"conversation_id\":\"c10\",\"status\":\"SUCCESS\",\"response\":\"closing brace } here\"}\n"),
+			wantNil:    false,
+			wantStatus: "SUCCESS",
+		},
+		{
+			name:       "envelope with unmatched single opening brace in string response surrounded by logs",
+			input:      []byte("warning: check\n{\"conversation_id\":\"c11\",\"status\":\"SUCCESS\",\"response\":\"opening brace { here\"}\n"),
+			wantNil:    false,
+			wantStatus: "SUCCESS",
+		},
+		{
+			name:       "envelope with error field",
+			input:      []byte("{\"conversation_id\":\"c12\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"model not recognized\"}"),
+			wantNil:    false,
+			wantStatus: "ERROR",
+		},
 	}
 
 	for _, tc := range tests {

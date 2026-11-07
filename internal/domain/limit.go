@@ -41,6 +41,7 @@ type Envelope struct {
 	ConversationID string         `json:"conversation_id"`
 	Status         string         `json:"status"`
 	Response       string         `json:"response"`
+	Error          string         `json:"error,omitempty"`
 	Usage          map[string]any `json:"usage,omitempty"`
 	DeniedActions  []any          `json:"denied_actions,omitempty"`
 }
@@ -52,7 +53,7 @@ func HasPermissionDenial(r RawRunResult) bool {
 		if len(r.Envelope.DeniedActions) > 0 {
 			return true
 		}
-		if containsPermissionDenial(r.Envelope.Response) {
+		if containsPermissionDenial(r.Envelope.Response) || containsPermissionDenial(r.Envelope.Error) {
 			return true
 		}
 	}
@@ -111,7 +112,9 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 		if sv != "" && strings.EqualFold(status, sv) {
 			kind := detectLimitKind(r, p)
 			raw := "status: " + status
-			if r.Envelope != nil && r.Envelope.Response != "" {
+			if r.Envelope != nil && r.Envelope.Error != "" {
+				raw = r.Envelope.Error
+			} else if r.Envelope != nil && r.Envelope.Response != "" {
 				raw = r.Envelope.Response
 			} else if len(r.Stderr) > 0 {
 				raw = string(r.Stderr)
@@ -135,7 +138,11 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 			kind := detectLimitKind(r, p)
 			raw := string(r.Stderr)
 			if raw == "" && r.Envelope != nil {
-				raw = r.Envelope.Response
+				if r.Envelope.Error != "" {
+					raw = r.Envelope.Error
+				} else {
+					raw = r.Envelope.Response
+				}
 			}
 			return OutcomeLimit, &LimitSignal{
 				Kind: kind,
@@ -144,14 +151,20 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 		}
 	}
 
-	// Check response (bounded to first 4 KiB per docs/05 §4) and stderr for limit patterns
+	// Check response (bounded to first 4 KiB per docs/05 §4), error, and stderr for limit patterns
 	respHead := ""
+	envError := ""
 	if r.Envelope != nil {
 		resp := r.Envelope.Response
 		if len(resp) > 4096 {
 			respHead = resp[:4096]
 		} else {
 			respHead = resp
+		}
+		if len(r.Envelope.Error) > 4096 {
+			envError = r.Envelope.Error[:4096]
+		} else {
+			envError = r.Envelope.Error
 		}
 	}
 	stderrStr := string(r.Stderr)
@@ -166,11 +179,16 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 			patLower := strings.ToLower(pat)
 			if strings.Contains(strings.ToLower(stderrStr), patLower) ||
 				strings.Contains(strings.ToLower(respHead), patLower) ||
+				strings.Contains(strings.ToLower(envError), patLower) ||
 				strings.Contains(strings.ToLower(status), patLower) {
 				kind := detectLimitKind(r, p)
 				raw := stderrStr
 				if raw == "" {
-					raw = respHead
+					if envError != "" {
+						raw = envError
+					} else {
+						raw = respHead
+					}
 				}
 				return OutcomeLimit, &LimitSignal{
 					Kind: kind,
@@ -180,11 +198,15 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 			continue
 		}
 
-		if re.MatchString(stderrStr) || re.MatchString(respHead) || re.MatchString(status) {
+		if re.MatchString(stderrStr) || re.MatchString(respHead) || re.MatchString(envError) || re.MatchString(status) {
 			kind := detectLimitKind(r, p)
 			raw := stderrStr
 			if raw == "" {
-				raw = respHead
+				if envError != "" {
+					raw = envError
+				} else {
+					raw = respHead
+				}
 			}
 			return OutcomeLimit, &LimitSignal{
 				Kind: kind,
@@ -193,13 +215,13 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 		}
 	}
 
-	// Rule 4: launch failure or auth pattern in stderr
+	// Rule 4: launch failure or auth pattern in stderr/error
 	if r.ExitCode == 127 {
 		return OutcomeFatal, nil
 	}
 	authPatterns := []string{"not signed in", "authentication", "login required", "unauthenticated"}
 	for _, ap := range authPatterns {
-		if strings.Contains(strings.ToLower(stderrStr), ap) {
+		if strings.Contains(strings.ToLower(stderrStr), ap) || strings.Contains(strings.ToLower(envError), ap) {
 			return OutcomeFatal, nil
 		}
 	}
@@ -211,8 +233,8 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 		return OutcomeTransient, nil
 	}
 
-	// Rule 7: exit != 0 matching transient pattern
-	if MatchesTransientPattern(stderrStr) {
+	// Rule 7: exit != 0 matching transient pattern in stderr, error, stdout, or response
+	if MatchesTransientPattern(stderrStr) || MatchesTransientPattern(envError) || MatchesTransientPattern(respHead) || MatchesTransientPattern(string(r.Stdout)) {
 		return OutcomeTransient, nil
 	}
 
@@ -221,7 +243,16 @@ func ClassifyOutcome(r RawRunResult, p LimitPatterns) (Outcome, *LimitSignal) {
 }
 
 // TransientPatterns are the standard network/service transient substrings from docs/05 §4 Rule 7.
-var TransientPatterns = []string{"timeout", "econnreset", "502", "503", "unavailable", "deadline exceeded", "network", "try again"}
+var TransientPatterns = []string{
+	"timeout", "econnreset", "502", "503", "unavailable", "deadline exceeded", "network", "try again",
+	"connection reset", "connection refused", "broken pipe", "eof",
+	"500", "504", "bad gateway", "gateway timeout", "internal server error", "internal error",
+	"service temporarily unavailable", "server overloaded", "overloaded",
+	"socket hang up", "fetch failed", "tls handshake", "temporary failure",
+	"try later", "interrupted", "no route to host", "dns resolution failed",
+	"etimedout", "ehostunreach", "enetunreach", "rate limit", "resource exhausted",
+	"quota exceeded", "too many requests",
+}
 
 // MatchesTransientPattern reports whether text matches any transient pattern.
 func MatchesTransientPattern(text string) bool {
@@ -237,7 +268,7 @@ func MatchesTransientPattern(text string) bool {
 func detectLimitKind(r RawRunResult, p LimitPatterns) LimitKind {
 	texts := []string{string(r.Stderr)}
 	if r.Envelope != nil {
-		texts = append(texts, r.Envelope.Response, r.Envelope.Status)
+		texts = append(texts, r.Envelope.Response, r.Envelope.Status, r.Envelope.Error)
 	}
 	for _, h := range p.WeeklyHint {
 		if h == "" {

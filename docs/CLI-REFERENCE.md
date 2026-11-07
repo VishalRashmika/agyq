@@ -16,6 +16,7 @@ agyq [command] [flags]
 | [`plan`](#agyq-plan) | Parse and validate `queue.md`, display execution order |
 | [`run`](#agyq-run) | Start sequential queue execution |
 | [`status`](#agyq-status) | Show current state, active prompt, attempt counts, and event stream |
+| [`errors`](#agyq-errors) | Display diagnostic error log entries from `errors.log` |
 | [`doctor`](#agyq-doctor) | Run comprehensive 9-step preflight diagnostic |
 | [`pause`](#agyq-pause) | Request queue runner to pause gracefully after current prompt |
 | [`resume`](#agyq-resume) | Resume a paused queue runner |
@@ -76,17 +77,19 @@ agyq plan [--config <path>] [--json]
 Runs pending prompts sequentially until the queue completes, an unrecoverable failure occurs, or a pause is requested.
 
 ```bash
-agyq run [--config <path>] [--pty]
+agyq run [--config <path>] [--on-failure stop|continue] [--continue-on-failure]
 ```
 
 - **Flags:**
-  - `--pty`: Allocate pseudo-terminal when invoking `agy` (useful if interactive coloring is required).
+  - `--on-failure <stop|continue>`: Policy when a prompt fails. `stop` (default) halts the orchestrator; `continue` records the failure and moves to the next pending prompt.
+  - `--continue-on-failure`: Shortcut for `--on-failure continue`.
 - **Behavior:**
   - Checks git repository status.
   - Creates git checkpoint `agyq/cp-N` before each prompt.
   - Invokes `agy` headless print mode with configured model, effort, and permission flags.
   - Intercepts rate limits and quota resets, sleeping until quota is restored.
   - Retries transient errors up to `max_attempts`.
+  - On failure, writes detailed diagnostics to `.agyq/errors.log`.
 - **Exit Codes:** `0` (Queue complete or clean stop), `1` (Fatal run failure).
 
 ---
@@ -100,7 +103,20 @@ agyq status [--config <path>] [--json]
 
 - **Flags:**
   - `--json`: Output raw `RunState` and recent events in JSON format.
-- **Output:** Table showing prompt IDs, statuses (`pending`, `running`, `succeeded`, `failed`, `interrupted`, `skipped`), attempt counts, last change timestamp, and recent event stream.
+- **Output:** Table showing prompt IDs, statuses (`pending`, `running`, `succeeded`, `failed`, `interrupted`, `skipped`), attempt counts, last change timestamp, recent event stream, and failed prompt diagnostics with transcript paths.
+
+---
+
+### `agyq errors`
+Displays recent diagnostic error log entries from `.agyq/errors.log`.
+
+```bash
+agyq errors [--config <path>] [--state-dir <path>] [--tail <N>]
+```
+
+- **Flags:**
+  - `--tail <N>`, `-n <N>`: Number of trailing log lines to display (default: 50).
+- **Output:** Human-readable error records with UTC timestamps, prompt number and title, attempt number, exit code, outcome, exact error message, transcript path, and stderr snippet.
 
 ---
 

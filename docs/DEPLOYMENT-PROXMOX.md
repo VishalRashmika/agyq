@@ -103,3 +103,66 @@ You may append prompts to `queue.md` while it runs; edits to already-started pro
 
 - Limits are per account: a rolling ~5-hour session window plus a weekly cap (exact values are Google's and may change). `agyq` can only wait; if you use `agy` interactively on your PC at the same time, you share the same quota and may trigger limits earlier.
 - Heavy runs at "high" effort consume quota faster; the tool will happily pause at the limit and continue after reset.
+
+## 8. Updating agyq in Proxmox (In-Place Update Without Reinstalling)
+
+Because `agyq` compiles to a single standalone static binary and preserves all state in `.agyq/`, updating it does **not** require reinstalling system packages, deleting state, or re-authenticating `agy`.
+
+### Option A: If building inside the Proxmox container (Fastest)
+
+If Git and Go are available on the container/guest:
+
+```bash
+# 1. SSH into the container/VM
+ssh agyq@<container-ip>
+
+# 2. Pull the latest source code
+cd ~/agyq   # or wherever your agyq repo clone is located
+git pull origin main
+
+# 3. Build the binary
+make build  # or: go build -o agyq ./cmd/agyq
+
+# 4. Atomically install the updated binary
+sudo install -m 0755 agyq /usr/local/bin/agyq
+
+# 5. Restart the service and verify
+sudo systemctl restart agyq
+agyq version
+agyq status
+```
+
+### Option B: If building on your development machine (No Go needed on container)
+
+Build locally and transfer the compiled binary directly into the Proxmox container:
+
+```bash
+# 1. On your local development machine: build Linux binary
+GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o agyq ./cmd/agyq
+
+# 2. Transfer binary to the container:
+#    Via SCP:
+scp agyq agyq@<container-ip>:/tmp/agyq
+#    OR from Proxmox host to LXC container:
+#    pct push <CTID> agyq /tmp/agyq
+
+# 3. On the container: install and restart
+ssh agyq@<container-ip>
+sudo install -m 0755 /tmp/agyq /usr/local/bin/agyq
+rm /tmp/agyq
+sudo systemctl restart agyq
+
+# 4. Verify version and queue health
+agyq version
+agyq status
+```
+
+### Preserving Running Prompts
+
+If a prompt is currently active (`running`) and you do not want to interrupt it:
+1. Run `agyq pause` (or `touch ~agyq/work/myproject/.agyq/control/pause`).
+2. Wait for `agyq status` to report that the active prompt completed and the queue is paused.
+3. Replace the binary with `sudo install -m 0755 agyq /usr/local/bin/agyq`.
+4. Run `sudo systemctl restart agyq`.
+5. Run `agyq resume` to continue sequential execution.
+All queue progress, historical checkpoints, and transcripts in `.agyq/` remain 100% untouched.

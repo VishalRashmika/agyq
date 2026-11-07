@@ -1,6 +1,8 @@
 package application
 
 import (
+	"strings"
+
 	"agyq/internal/domain"
 )
 
@@ -41,14 +43,20 @@ func (c *Classifier) ClassifyWithSignal(res RawRunResult, consecutiveFailures in
 			} else {
 				reason = "invalid or missing envelope on exit 0"
 			}
-		} else if domain.MatchesTransientPattern(string(res.Stderr)) {
+		} else if isTransientMatched(res) {
 			reason = "transient error matched"
+			if detail := extractErrorDetail(res); detail != "" {
+				reason += ": " + detail
+			}
 		} else {
 			if consecutiveFailures > 0 {
 				outcome = domain.OutcomeFatal
 				reason = "repeated execution failure"
 			} else {
 				reason = "transient execution failure"
+			}
+			if detail := extractErrorDetail(res); detail != "" {
+				reason += ": " + detail
 			}
 		}
 
@@ -63,6 +71,9 @@ func (c *Classifier) ClassifyWithSignal(res RawRunResult, consecutiveFailures in
 			reason = "tool execution was auto-denied due to missing permissions (check permission_mode or settings.json)"
 		} else {
 			reason = "fatal execution failure"
+			if detail := extractErrorDetail(res); detail != "" {
+				reason += ": " + detail
+			}
 		}
 
 	case domain.OutcomeSuccess:
@@ -79,4 +90,46 @@ func (c *Classifier) ClassifyWithSignal(res RawRunResult, consecutiveFailures in
 func (c *Classifier) Classify(res RawRunResult, consecutiveFailures int) (domain.Outcome, string) {
 	outcome, reason, _ := c.ClassifyWithSignal(res, consecutiveFailures)
 	return outcome, reason
+}
+
+func isTransientMatched(res RawRunResult) bool {
+	if domain.MatchesTransientPattern(string(res.Stderr)) || domain.MatchesTransientPattern(string(res.Stdout)) {
+		return true
+	}
+	if res.Envelope != nil {
+		if domain.MatchesTransientPattern(res.Envelope.Error) || domain.MatchesTransientPattern(res.Envelope.Response) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractErrorDetail(res RawRunResult) string {
+	if res.Envelope != nil && res.Envelope.Error != "" {
+		return cleanSingleLine(res.Envelope.Error, 200)
+	}
+	if len(res.Stderr) > 0 {
+		return cleanSingleLine(string(res.Stderr), 200)
+	}
+	if len(res.Stdout) > 0 && res.ExitCode != 0 {
+		return cleanSingleLine(string(res.Stdout), 200)
+	}
+	return ""
+}
+
+func cleanSingleLine(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	lines := strings.Split(s, "\n")
+	first := ""
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			first = l
+			break
+		}
+	}
+	if len(first) > maxLen {
+		return first[:maxLen] + "..."
+	}
+	return first
 }

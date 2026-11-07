@@ -150,3 +150,84 @@ func TestStatus_GoldenJSONOutput(t *testing.T) {
 		t.Errorf("recent events got: %+v", parsed.RecentEvents)
 	}
 }
+
+func TestStatus_FailedPromptDiagnostics(t *testing.T) {
+	now := time.Date(2026, 10, 11, 10, 30, 0, 0, time.UTC)
+	sampleState := &domain.RunState{
+		SchemaVersion: 1,
+		RunID:         "run-fail-1",
+		BootCount:     1,
+		Records: []domain.PromptRecord{
+			{
+				Number: 1,
+				Title:  "Task 1",
+				Status: domain.StatusSucceeded,
+			},
+			{
+				Number: 2,
+				Title:  "Task 2 Failing",
+				Status: domain.StatusFailed,
+				Attempts: []domain.Attempt{
+					{
+						N:              1,
+						Outcome:        domain.OutcomeFatal,
+						Error:          "fatal execution failure: invalid model selection",
+						TranscriptPath: ".agyq/transcripts/0002-a1.log",
+					},
+				},
+			},
+			{
+				Number: 3,
+				Title:  "Task 3 Pending",
+				Status: domain.StatusPending,
+			},
+		},
+	}
+
+	app := NewApp(nil, nil).
+		WithStateStoreFactory(func(stateDir string) (application.StateStore, error) {
+			return &mockStateStore{state: sampleState}, nil
+		}).
+		WithClock(&fixedClock{now: now})
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"status"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit code got %d, want 0 (stderr: %s)", code, stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Failed Prompts:") {
+		t.Errorf("expected 'Failed Prompts:' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#2 [attempt 1]: fatal execution failure: invalid model selection") {
+		t.Errorf("expected failure detail in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Transcript: .agyq/transcripts/0002-a1.log") {
+		t.Errorf("expected transcript path in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Queue halted on failure; subsequent prompts remain in pending status") {
+		t.Errorf("expected halted notice in output, got:\n%s", out)
+	}
+}
+
+func TestErrors_Subcommand(t *testing.T) {
+	app := NewApp(nil, nil).
+		WithErrorsReader(func(stateDir string, limit int) ([]string, error) {
+			return []string{
+				"[2026-11-06 12:00:00 UTC] ERROR - Prompt #2: Task 2 Failing",
+				"Reason: fatal execution failure",
+			}, nil
+		})
+
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"errors"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit code got %d, want 0 (stderr: %s)", code, stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Prompt #2: Task 2 Failing") {
+		t.Errorf("expected error log output, got:\n%s", out)
+	}
+}

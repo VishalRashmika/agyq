@@ -50,6 +50,9 @@ type OrchestratorFactory func(cfg application.Config) (OrchestratorRunner, error
 // EventsReaderFunc reads recent events from state directory.
 type EventsReaderFunc func(stateDir string, limit int) ([]application.Event, error)
 
+// ErrorsReaderFunc reads recent lines from the errors log file.
+type ErrorsReaderFunc func(stateDir string, limit int) ([]string, error)
+
 // ControlSubmitterFunc submits an operator control command to the state directory.
 type ControlSubmitterFunc func(stateDir string, cmd application.ControlCommand) error
 
@@ -65,6 +68,7 @@ type App struct {
 	Clock            application.Clock
 	NewOrchestrator  OrchestratorFactory
 	ReadRecentEvents EventsReaderFunc
+	ReadRecentErrors ErrorsReaderFunc
 	ControlSubmitter ControlSubmitterFunc
 	ServiceRunner    ServiceRunnerFunc
 	Context          context.Context
@@ -105,6 +109,12 @@ func (a *App) WithOrchestratorFactory(of OrchestratorFactory) *App {
 // WithEventsReader configures the EventsReader func.
 func (a *App) WithEventsReader(er EventsReaderFunc) *App {
 	a.ReadRecentEvents = er
+	return a
+}
+
+// WithErrorsReader configures the ErrorsReader func.
+func (a *App) WithErrorsReader(er ErrorsReaderFunc) *App {
+	a.ReadRecentErrors = er
 	return a
 }
 
@@ -154,6 +164,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) int {
 		return a.runRun(args[1:], stdout, stderr)
 	case "status":
 		return a.runStatus(args[1:], stdout, stderr)
+	case "errors":
+		return a.runErrors(args[1:], stdout, stderr)
 	case "pause":
 		return a.runPause(args[1:], stdout, stderr)
 	case "resume":
@@ -383,6 +395,7 @@ func (a *App) runRun(args []string, stdout, stderr io.Writer) int {
 	var queuePath string
 	var stateDir string
 	var workDir string
+	var onFailureOverride application.FailurePolicy
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -418,6 +431,21 @@ func (a *App) runRun(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintln(stderr, "agyq run: --work-dir requires a path argument")
 				return ExitUsage
 			}
+		case "--on-failure":
+			if i+1 < len(args) {
+				policy := application.FailurePolicy(args[i+1])
+				if policy != application.FailureStop && policy != application.FailureContinue {
+					fmt.Fprintf(stderr, "agyq run: invalid --on-failure policy %q (must be stop or continue)\n", args[i+1])
+					return ExitUsage
+				}
+				onFailureOverride = policy
+				i++
+			} else {
+				fmt.Fprintln(stderr, "agyq run: --on-failure requires a policy (stop or continue)")
+				return ExitUsage
+			}
+		case "--continue-on-failure":
+			onFailureOverride = application.FailureContinue
 		default:
 			fmt.Fprintf(stderr, "agyq run: unknown flag %q\n", args[i])
 			return ExitUsage
@@ -435,6 +463,10 @@ func (a *App) runRun(args []string, stdout, stderr io.Writer) int {
 	} else {
 		def := application.DefaultConfig()
 		cfg = &def
+	}
+
+	if onFailureOverride != "" {
+		cfg.OnFailure = onFailureOverride
 	}
 
 	if queuePath != "" {
@@ -495,7 +527,7 @@ func (a *App) runRun(args []string, stdout, stderr io.Writer) int {
 			return ExitLocked
 		}
 		if errors.Is(err, application.ErrQueueHalted) {
-			fmt.Fprintln(stderr, "agyq run: stopped on failure (exit code 2)")
+			fmt.Fprintln(stderr, "agyq run: stopped on failure (exit code 2). Remaining prompts stay pending. See .agyq/errors.log or 'agyq status' for details.")
 			return ExitStopped
 		}
 		var valErr *domain.QueueValidationError
@@ -639,7 +671,110 @@ func (a *App) runStatus(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	var failedPrompts []domain.PromptRecord
+	hasPendingAfterFailure := false
+	hasFailed := false
+	for _, r := range state.Records {
+		if r.Status == domain.StatusFailed {
+			failedPrompts = append(failedPrompts, r)
+			hasFailed = true
+		} else if hasFailed && r.Status == domain.StatusPending {
+			hasPendingAfterFailure = true
+		}
+	}
+
+	if len(failedPrompts) > 0 {
+		fmt.Fprintln(stdout, "\nFailed Prompts:")
+		for _, fp := range failedPrompts {
+			errMsg := "(no error details)"
+			transcript := ""
+			attemptN := len(fp.Attempts)
+			if attemptN > 0 {
+				lastAtt := fp.Attempts[attemptN-1]
+				if lastAtt.Error != "" {
+					errMsg = lastAtt.Error
+				}
+				if lastAtt.TranscriptPath != "" {
+					transcript = lastAtt.TranscriptPath
+				}
+			}
+			fmt.Fprintf(stdout, "  #%d [attempt %d]: %s\n", fp.Number, attemptN, errMsg)
+			if transcript != "" {
+				fmt.Fprintf(stdout, "      Transcript: %s\n", transcript)
+			}
+		}
+		if hasPendingAfterFailure {
+			fmt.Fprintln(stdout, "\nNotice: Queue halted on failure; subsequent prompts remain in pending status.")
+			fmt.Fprintln(stdout, "To resume: run 'agyq retry <number>' or 'agyq skip <number>', or set \"on_failure\": \"continue\" in agyq.json.")
+		}
+		fmt.Fprintf(stdout, "Diagnostic error log: %s\n", filepath.Join(stateDir, "errors.log"))
+	}
+
 	return ExitOK
+}
+
+func (a *App) runErrors(args []string, stdout, stderr io.Writer) int {
+	var configPath string
+	var stateDir string
+	tailLines := 50
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--config", "-c":
+			if i+1 < len(args) {
+				configPath = args[i+1]
+				i++
+			} else {
+				fmt.Fprintln(stderr, "agyq errors: --config requires a path argument")
+				return ExitUsage
+			}
+		case "--state-dir":
+			if i+1 < len(args) {
+				stateDir = args[i+1]
+				i++
+			} else {
+				fmt.Fprintln(stderr, "agyq errors: --state-dir requires a path argument")
+				return ExitUsage
+			}
+		case "--tail", "-n":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil && n > 0 {
+					tailLines = n
+				} else {
+					fmt.Fprintf(stderr, "agyq errors: invalid --tail count %q\n", args[i+1])
+					return ExitUsage
+				}
+				i++
+			} else {
+				fmt.Fprintln(stderr, "agyq errors: --tail requires a count argument")
+				return ExitUsage
+			}
+		default:
+			fmt.Fprintf(stderr, "agyq errors: unknown flag %q\n", args[i])
+			return ExitUsage
+		}
+	}
+
+	stateDir = a.resolveStateDir(configPath, stateDir)
+
+	if a.ReadRecentErrors != nil {
+		lines, err := a.ReadRecentErrors(stateDir, tailLines)
+		if err != nil {
+			fmt.Fprintf(stderr, "agyq errors: failed to read error log: %v\n", err)
+			return ExitStopped
+		}
+		if len(lines) == 0 {
+			fmt.Fprintln(stdout, "No error entries recorded.")
+			return ExitOK
+		}
+		for _, line := range lines {
+			fmt.Fprintln(stdout, line)
+		}
+		return ExitOK
+	}
+
+	fmt.Fprintln(stderr, "agyq errors: error log reader not configured")
+	return ExitStopped
 }
 
 func (a *App) resolveStateDir(configPath, explicitStateDir string) string {
@@ -1027,17 +1162,41 @@ func (a *App) runInit(args []string, stdout, stderr io.Writer) int {
 	if isGit {
 		giPath := filepath.Join(absTarget, ".gitignore")
 		giContent, _ := os.ReadFile(giPath)
-		if !strings.Contains(string(giContent), ".agyq") {
+		entries := []string{
+			".agyq/",
+			"queue.md",
+			"QUEUE.md",
+			"queue.*.md",
+			"*.queue.md",
+			".queue.md",
+			"agyq.json",
+			"agyq.local.json",
+			"*.agyq.json",
+			"errors.log",
+			"*.log",
+			".cache/",
+			"*.cache",
+		}
+		var missing []string
+		for _, e := range entries {
+			if !strings.Contains(string(giContent), e) {
+				missing = append(missing, e)
+			}
+		}
+		if len(missing) > 0 {
 			var toAppend string
 			if len(giContent) > 0 && !strings.HasSuffix(string(giContent), "\n") {
 				toAppend += "\n"
 			}
-			toAppend += "# agyq runtime state and transcripts\n.agyq/\n"
+			toAppend += "# agyq runtime state, queues, cache, and logs\n"
+			for _, m := range missing {
+				toAppend += m + "\n"
+			}
 			f, err := os.OpenFile(giPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err == nil {
 				_, _ = f.WriteString(toAppend)
 				_ = f.Close()
-				fmt.Fprintln(stdout, "  Configured .gitignore (.agyq/)")
+				fmt.Fprintln(stdout, "  Configured .gitignore (.agyq/, queue.md, cache, logs)")
 			}
 		} else {
 			fmt.Fprintln(stdout, "  .gitignore already configured (.agyq/)")
@@ -1382,8 +1541,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  version               print version")
 	fmt.Fprintln(w, "  doctor [--config path] [--queue path] run preflight environment checks")
 	fmt.Fprintln(w, "  plan [--config path] [--dry-run] [queue-file] parse queue and preview plan")
-	fmt.Fprintln(w, "  run [--config path]   start sequential queue orchestrator")
+	fmt.Fprintln(w, "  run [--config path] [--on-failure stop|continue] start sequential queue orchestrator")
 	fmt.Fprintln(w, "  status [--json]       display queue status and recent events")
+	fmt.Fprintln(w, "  errors [--tail N]     display recent error log entries")
 	fmt.Fprintln(w, "  pause                 pause queue between prompts")
 	fmt.Fprintln(w, "  resume                resume paused queue")
 	fmt.Fprintln(w, "  skip <N>              skip pending or interrupted prompt #N")

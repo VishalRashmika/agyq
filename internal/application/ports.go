@@ -79,6 +79,25 @@ type EventLog interface {
 	Emit(ctx context.Context, e Event)
 }
 
+// ErrorEntry represents a detailed failure and diagnostic record.
+type ErrorEntry struct {
+	Time       time.Time           `json:"time"`
+	Prompt     domain.PromptNumber `json:"prompt,omitempty"`
+	Title      string              `json:"title,omitempty"`
+	Attempt    int                 `json:"attempt,omitempty"`
+	ExitCode   int                 `json:"exit_code,omitempty"`
+	Outcome    domain.Outcome      `json:"outcome,omitempty"`
+	Reason     string              `json:"reason,omitempty"`
+	Message    string              `json:"message,omitempty"`
+	Transcript string              `json:"transcript,omitempty"`
+	StderrTail string              `json:"stderr_tail,omitempty"`
+}
+
+// ErrorLogger records diagnostic information to an errors log file.
+type ErrorLogger interface {
+	LogError(ctx context.Context, entry ErrorEntry)
+}
+
 // RunRequest defines the parameters for a prompt execution turn.
 type RunRequest struct {
 	Prompt         domain.Prompt

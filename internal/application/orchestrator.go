@@ -39,6 +39,7 @@ type Orchestrator struct {
 	stateStore     StateStore
 	runner         AgyRunner
 	eventLog       EventLog
+	errorLog       ErrorLogger
 	locker         Locker
 	clock          Clock
 	sleeper        Sleeper
@@ -71,6 +72,12 @@ func NewOrchestrator(
 		sleeper:     sl,
 		classifier:  NewClassifier(cfg),
 	}
+}
+
+// WithErrorLogger injects an error logger for writing detailed diagnostics to errors.log.
+func (o *Orchestrator) WithErrorLogger(el ErrorLogger) *Orchestrator {
+	o.errorLog = el
+	return o
 }
 
 // WithStrayProcessCleaner injects a stray process cleaner (F-050).
@@ -273,6 +280,17 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 			}
 			_ = o.stateStore.Save(ctx, state)
 			o.emitEvent(ctx, "prompt.failed", rec.Number, "Prompt failed: too_many_interruptions", map[string]any{"reason": "too_many_interruptions"})
+			if o.errorLog != nil {
+				o.errorLog.LogError(ctx, ErrorEntry{
+					Time:    now,
+					Prompt:  rec.Number,
+					Title:   rec.Title,
+					Attempt: len(rec.Attempts),
+					Outcome: domain.OutcomeFatal,
+					Reason:  "too_many_interruptions",
+					Message: fmt.Sprintf("Exceeded max resume limit of %d", maxResumes),
+				})
+			}
 			if o.cfg.OnFailure == FailureStop {
 				return ErrQueueHalted
 			}
@@ -282,6 +300,16 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 		if o.cfg.Recovery == RecoveryRestartClean && o.checkpointer != nil && rec.Checkpoint != "" {
 			if err := o.checkpointer.ResetTo(ctx, o.cfg.WorkDir, rec.Checkpoint, false); err != nil {
 				o.emitEvent(ctx, "reset.failed", rec.Number, fmt.Sprintf("Failed to reset to checkpoint %s", rec.Checkpoint), map[string]any{"error": err.Error()})
+				if o.errorLog != nil {
+					o.errorLog.LogError(ctx, ErrorEntry{
+						Time:    o.clock.Now(),
+						Prompt:  rec.Number,
+						Title:   rec.Title,
+						Outcome: domain.OutcomeFatal,
+						Reason:  "reset_failed",
+						Message: fmt.Sprintf("Failed to reset to checkpoint %s: %v", rec.Checkpoint, err),
+					})
+				}
 				return fmt.Errorf("reset to checkpoint %s: %w", rec.Checkpoint, err)
 			}
 			o.emitEvent(ctx, "reset.complete", rec.Number, fmt.Sprintf("Reset to checkpoint %s", rec.Checkpoint), map[string]any{"ref": rec.Checkpoint})
@@ -308,6 +336,16 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 		ref, err := o.checkpointer.Checkpoint(ctx, o.cfg.WorkDir, rec.Number)
 		if err != nil {
 			o.emitEvent(ctx, "checkpoint.failed", rec.Number, "Failed to create checkpoint before attempt 1", map[string]any{"error": err.Error()})
+			if o.errorLog != nil {
+				o.errorLog.LogError(ctx, ErrorEntry{
+					Time:    o.clock.Now(),
+					Prompt:  rec.Number,
+					Title:   rec.Title,
+					Outcome: domain.OutcomeFatal,
+					Reason:  "checkpoint_failed",
+					Message: fmt.Sprintf("Failed to create checkpoint before attempt 1: %v", err),
+				})
+			}
 			return fmt.Errorf("git checkpoint before prompt #%d: %w", rec.Number, err)
 		}
 		rec.Checkpoint = ref
@@ -388,6 +426,27 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 	att.Outcome = outcome
 	att.TranscriptPath = res.TranscriptPath
 	att.Error = reason
+
+	if o.errorLog != nil && outcome != domain.OutcomeSuccess && outcome != domain.OutcomeInterrupted {
+		errMsg := ""
+		if res.Envelope != nil && res.Envelope.Error != "" {
+			errMsg = res.Envelope.Error
+		} else if runErr != nil {
+			errMsg = runErr.Error()
+		}
+		o.errorLog.LogError(ctx, ErrorEntry{
+			Time:       finTime,
+			Prompt:     rec.Number,
+			Title:      rec.Title,
+			Attempt:    attemptN,
+			ExitCode:   res.ExitCode,
+			Outcome:    outcome,
+			Reason:     reason,
+			Message:    errMsg,
+			Transcript: res.TranscriptPath,
+			StderrTail: string(res.Stderr),
+		})
+	}
 
 	switch outcome {
 	case domain.OutcomeSuccess:
@@ -512,6 +571,17 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 			state.UpdatedAt = finTime
 			_ = o.stateStore.Save(ctx, state)
 			o.emitEvent(ctx, "prompt.failed", rec.Number, "Prompt failed: limit_unresolved", map[string]any{"reason": "limit_unresolved"})
+			if o.errorLog != nil {
+				o.errorLog.LogError(ctx, ErrorEntry{
+					Time:    finTime,
+					Prompt:  rec.Number,
+					Title:   rec.Title,
+					Attempt: attemptN,
+					Outcome: domain.OutcomeFatal,
+					Reason:  "limit_unresolved",
+					Message: fmt.Sprintf("Usage limit wait exceeded maximum duration of %s", maxTotal),
+				})
+			}
 			if o.cfg.OnFailure == FailureStop {
 				return ErrQueueHalted
 			}

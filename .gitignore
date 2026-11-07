@@ -6,8 +6,29 @@
 coverage.txt
 .DS_Store
 
-# Runtime state & transcripts
+# Runtime state, transcripts, logs & cache
 .agyq/
+*.agyq
+.agyq*
+*.log
+errors.log
+cache/
+*.cache
+.cache/
+.gemini/
+.antigravity/
+
+# agyq queues & configs (prevent accidental push)
+queue.md
+QUEUE.md
+queue.*.md
+*.queue.md
+.queue.md
+!examples/queue.example.md
+agyq.json
+agyq.local.json
+*.agyq.json
+!deploy/agyq.example.json
 
 # Internal project tracking & agent builder instructions
 PROJECT-STATE.md

@@ -39,6 +39,10 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
+		errorLog, err := infrastructure.NewFileErrorLogger(filepath.Join(cfg.StateDir, "errors.log"))
+		if err != nil {
+			return nil, err
+		}
 		cleaner := infrastructure.NewOSStrayProcessCleaner()
 		checkpointer := infrastructure.NewGitCheckpointer()
 		controlChannel := infrastructure.NewFileControlChannel(cfg.StateDir)
@@ -51,7 +55,8 @@ func main() {
 			locker,
 			clock,
 			sleeper,
-		).WithStrayProcessCleaner(cleaner).
+		).WithErrorLogger(errorLog).
+			WithStrayProcessCleaner(cleaner).
 			WithCheckpointer(checkpointer).
 			WithControlChannel(controlChannel), nil
 	}
@@ -66,6 +71,11 @@ func main() {
 			events = events[len(events)-limit:]
 		}
 		return events, nil
+	}
+
+	errorsReader := func(stateDir string, limit int) ([]string, error) {
+		errorsPath := filepath.Join(stateDir, "errors.log")
+		return infrastructure.ReadErrorsFile(errorsPath, limit)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -90,6 +100,7 @@ func main() {
 		WithClock(clock).
 		WithOrchestratorFactory(orchestratorFactory).
 		WithEventsReader(eventsReader).
+		WithErrorsReader(errorsReader).
 		WithControlSubmitter(infrastructure.WriteControlCommand).
 		WithServiceRunner(serviceRunner)
 

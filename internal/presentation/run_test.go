@@ -109,6 +109,28 @@ func TestRunCommand_ExitCodes(t *testing.T) {
 			wantCode:   ExitPreflight,
 			wantStderr: "preflight checks failed",
 		},
+		{
+			name:     "flag: --continue-on-failure overrides policy",
+			args:     []string{"run", "--continue-on-failure"},
+			checker:  goodChecker,
+			loader:   baseLoader,
+			wantCode: ExitOK,
+		},
+		{
+			name:     "flag: --on-failure continue",
+			args:     []string{"run", "--on-failure", "continue"},
+			checker:  goodChecker,
+			loader:   baseLoader,
+			wantCode: ExitOK,
+		},
+		{
+			name:       "exit 1: invalid --on-failure value",
+			args:       []string{"run", "--on-failure", "invalid-policy"},
+			checker:    goodChecker,
+			loader:     baseLoader,
+			wantCode:   ExitUsage,
+			wantStderr: "invalid --on-failure policy",
+		},
 	}
 
 	for _, tc := range tests {

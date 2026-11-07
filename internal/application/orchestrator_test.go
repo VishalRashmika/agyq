@@ -107,6 +107,14 @@ func (f *fakeEventLog) Emit(ctx context.Context, e Event) {
 	f.events = append(f.events, e)
 }
 
+type fakeErrorLog struct {
+	entries []ErrorEntry
+}
+
+func (f *fakeErrorLog) LogError(ctx context.Context, entry ErrorEntry) {
+	f.entries = append(f.entries, entry)
+}
+
 type concurrencyTrackerRunner struct {
 	activeCount int32
 	maxActive   int32
@@ -1431,5 +1439,55 @@ func TestOrchestrator_F063_Retry(t *testing.T) {
 	})
 	if runningState.Records[0].Status != domain.StatusRunning {
 		t.Fatalf("expected prompt 1 to remain running on retry refusal, got %s", runningState.Records[0].Status)
+	}
+}
+
+func TestOrchestrator_ErrorLoggerRecordsDiagnostics(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	clk := &fakeClock{now: now}
+	cfg := DefaultConfig()
+	cfg.OnFailure = FailureContinue
+
+	prompts := []domain.Prompt{
+		{Number: 1, Title: "Broken prompt", Body: "do something", Hash: "h1"},
+	}
+	qs := &memQueueSource{prompts: prompts}
+	ss := &memStateStore{}
+	runner := &concurrencyTrackerRunner{
+		turnHandler: func(req RunRequest) (RawRunResult, error) {
+			return RawRunResult{
+				ExitCode: 1,
+				Envelope: &Envelope{
+					Status: "ERROR",
+					Error:  "unrecognized model slug",
+				},
+				Stderr:         []byte("error: invalid model"),
+				TranscriptPath: ".agyq/transcripts/0001-a1.log",
+			}, nil
+		},
+	}
+	events := &fakeEventLog{}
+	errorLog := &fakeErrorLog{}
+	sl := &fakeSleeper{clock: clk}
+
+	orch := NewOrchestrator(cfg, qs, ss, runner, events, &fakeLocker{}, clk, sl).
+		WithErrorLogger(errorLog)
+
+	if err := orch.Run(context.Background()); err != nil {
+		t.Fatalf("orch.Run failed: %v", err)
+	}
+
+	if len(errorLog.entries) == 0 {
+		t.Fatal("expected error log entries, got none")
+	}
+	entry := errorLog.entries[0]
+	if entry.Prompt != 1 {
+		t.Errorf("expected entry prompt 1, got %d", entry.Prompt)
+	}
+	if entry.Message != "unrecognized model slug" {
+		t.Errorf("expected entry message 'unrecognized model slug', got %q", entry.Message)
+	}
+	if entry.Transcript != ".agyq/transcripts/0001-a1.log" {
+		t.Errorf("expected transcript path, got %q", entry.Transcript)
 	}
 }

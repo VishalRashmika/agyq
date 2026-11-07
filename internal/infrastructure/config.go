@@ -111,6 +111,24 @@ func FindAgyBinary() string {
 	return "agy"
 }
 
+// StandardAgyqGitIgnoreEntries lists the runtime, cache, queue, and log patterns
+// that should never be tracked in git repositories running agyq.
+var StandardAgyqGitIgnoreEntries = []string{
+	".agyq/",
+	"queue.md",
+	"QUEUE.md",
+	"queue.*.md",
+	"*.queue.md",
+	".queue.md",
+	"agyq.json",
+	"agyq.local.json",
+	"*.agyq.json",
+	"errors.log",
+	"*.log",
+	".cache/",
+	"*.cache",
+}
+
 // EnsureGitIgnore ensures that the given entry exists in <repoRoot>/.gitignore.
 // Does nothing if <repoRoot> is not a git repository.
 func EnsureGitIgnore(repoRoot, entry string) error {
@@ -139,6 +157,59 @@ func EnsureGitIgnore(repoRoot, entry string) error {
 		toAppend += "\n"
 	}
 	toAppend += entry + "\n"
+	f, err := os.OpenFile(giPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(toAppend)
+	return err
+}
+
+// EnsureAgyqGitIgnore ensures that all standard agyq files and directories are ignored in <repoRoot>/.gitignore.
+func EnsureAgyqGitIgnore(repoRoot string) error {
+	gitDir := filepath.Join(repoRoot, ".git")
+	if _, err := os.Stat(gitDir); err != nil {
+		return nil
+	}
+	giPath := filepath.Join(repoRoot, ".gitignore")
+	data, err := os.ReadFile(giPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	content := string(data)
+	lines := strings.Split(content, "\n")
+
+	existing := make(map[string]bool)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			existing[trimmed] = true
+			existing[strings.Trim(trimmed, "/")] = true
+		}
+	}
+
+	var missing []string
+	for _, entry := range StandardAgyqGitIgnoreEntries {
+		clean := strings.Trim(entry, "/")
+		if !existing[entry] && !existing[clean] {
+			missing = append(missing, entry)
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	var toAppend string
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		toAppend += "\n"
+	}
+	toAppend += "# agyq runtime state, queues, cache, and logs\n"
+	for _, m := range missing {
+		toAppend += m + "\n"
+	}
+
 	f, err := os.OpenFile(giPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
@@ -198,7 +269,7 @@ func EnrichConfigDefaults(cfg *application.Config, baseDir string) {
 	if gitRoot != "" {
 		rel, err := filepath.Rel(gitRoot, cfg.StateDir)
 		if err == nil && !strings.HasPrefix(rel, "..") {
-			_ = EnsureGitIgnore(gitRoot, ".agyq/")
+			_ = EnsureAgyqGitIgnore(gitRoot)
 		}
 	}
 }
