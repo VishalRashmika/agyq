@@ -20,8 +20,9 @@ const (
 type FailurePolicy string
 
 const (
-	FailureStop     FailurePolicy = "stop"     // default: halt queue execution
-	FailureContinue FailurePolicy = "continue" // record failure and proceed to next prompt
+	FailureRetryAtEnd FailurePolicy = "retry-at-end" // default: defer failed prompt, finish rest of queue, retry at end once
+	FailureContinue   FailurePolicy = "continue"     // record failure and proceed to next prompt
+	FailureStop       FailurePolicy = "stop"         // halt queue execution
 )
 
 // Config is the validated, in-memory daemon configuration.
@@ -67,7 +68,7 @@ func DefaultConfig() Config {
 	return Config{
 		LogLevel:      "info",
 		Recovery:      RecoveryResume,
-		OnFailure:     FailureStop,
+		OnFailure:     FailureRetryAtEnd,
 		PromptTimeout: 90 * time.Minute,
 		MaxResumes:    5,
 		Agy: AgyConfig{
@@ -132,8 +133,8 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.Recovery != RecoveryResume && cfg.Recovery != RecoveryRestartClean {
 		return fmt.Errorf("invalid recovery policy %q (must be %q or %q)", cfg.Recovery, RecoveryResume, RecoveryRestartClean)
 	}
-	if cfg.OnFailure != FailureStop && cfg.OnFailure != FailureContinue {
-		return fmt.Errorf("invalid on_failure policy %q (must be %q or %q)", cfg.OnFailure, FailureStop, FailureContinue)
+	if cfg.OnFailure != FailureRetryAtEnd && cfg.OnFailure != FailureContinue && cfg.OnFailure != FailureStop {
+		return fmt.Errorf("invalid on_failure policy %q (must be %q, %q, or %q)", cfg.OnFailure, FailureRetryAtEnd, FailureContinue, FailureStop)
 	}
 	if cfg.PromptTimeout <= 0 {
 		return errors.New("prompt_timeout must be positive")

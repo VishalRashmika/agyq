@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -320,6 +322,117 @@ func TestOrchestrator_F033_FailurePolicyStopVsContinue(t *testing.T) {
 		}
 		if ss.state.Records[1].Status != domain.StatusSucceeded {
 			t.Errorf("prompt 2 status got %s, want succeeded", ss.state.Records[1].Status)
+		}
+	})
+
+	t.Run("on_failure retry-at-end (default) skips failed prompt, completes remaining, retries at end and succeeds", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.QueueFile = "queue.md"
+		// Default is FailureRetryAtEnd
+
+		qs := &memQueueSource{prompts: prompts}
+		ss := &memStateStore{}
+		var promptExecutionOrder []int
+		var attemptModes []domain.RunMode
+		var preambles []string
+
+		runner := &concurrencyTrackerRunner{
+			turnHandler: func(req RunRequest) (RawRunResult, error) {
+				promptExecutionOrder = append(promptExecutionOrder, int(req.Prompt.Number))
+				attemptModes = append(attemptModes, req.Mode)
+				preambles = append(preambles, req.Preamble)
+
+				if req.Prompt.Number == 1 {
+					if req.AttemptNumber == 1 {
+						return RawRunResult{ExitCode: 127, Stderr: []byte("initial build error")}, nil
+					}
+					// Attempt 2 (retry at end): succeeds
+					return RawRunResult{ExitCode: 0, Envelope: &Envelope{Status: "SUCCESS"}}, nil
+				}
+				// Prompt 2 succeeds
+				return RawRunResult{ExitCode: 0, Envelope: &Envelope{Status: "SUCCESS"}}, nil
+			},
+		}
+
+		orch := NewOrchestrator(cfg, qs, ss, runner, &fakeEventLog{}, &fakeLocker{}, &fakeClock{}, &fakeSleeper{})
+		err := orch.Run(context.Background())
+		if err != nil {
+			t.Fatalf("expected nil error on retry-at-end success, got: %v", err)
+		}
+
+		// Prompt execution order must be: Prompt 1 (fail), Prompt 2 (success), Prompt 1 (retry, success)
+		expectedOrder := []int{1, 2, 1}
+		if !reflect.DeepEqual(promptExecutionOrder, expectedOrder) {
+			t.Errorf("execution order got %v, want %v", promptExecutionOrder, expectedOrder)
+		}
+
+		// Second attempt at prompt 1 should run in RunResume mode with FailedRetryPreamble
+		if attemptModes[2] != domain.RunResume {
+			t.Errorf("retry attempt mode got %v, want RunResume", attemptModes[2])
+		}
+		if !strings.Contains(preambles[2], "NOTE FROM THE AUTOMATION RUNNER") || !strings.Contains(preambles[2], "initial build error") {
+			t.Errorf("retry preamble missing expected error context: %s", preambles[2])
+		}
+
+		// Both prompts ultimately succeeded!
+		if ss.state.Records[0].Status != domain.StatusSucceeded {
+			t.Errorf("prompt 1 status got %s, want succeeded", ss.state.Records[0].Status)
+		}
+		if ss.state.Records[1].Status != domain.StatusSucceeded {
+			t.Errorf("prompt 2 status got %s, want succeeded", ss.state.Records[1].Status)
+		}
+		if !ss.state.Records[0].RetriedAtEnd {
+			t.Errorf("expected RetriedAtEnd=true on prompt 1")
+		}
+	})
+
+	t.Run("on_failure retry-at-end exhausts retry, logs error, and finishes queue", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.QueueFile = "queue.md"
+
+		qs := &memQueueSource{prompts: prompts}
+		ss := &memStateStore{}
+		errLogger := &fakeErrorLog{}
+		var promptExecutionOrder []int
+
+		runner := &concurrencyTrackerRunner{
+			turnHandler: func(req RunRequest) (RawRunResult, error) {
+				promptExecutionOrder = append(promptExecutionOrder, int(req.Prompt.Number))
+				if req.Prompt.Number == 1 {
+					return RawRunResult{ExitCode: 127, Stderr: []byte("persistent compilation failure")}, nil
+				}
+				return RawRunResult{ExitCode: 0, Envelope: &Envelope{Status: "SUCCESS"}}, nil
+			},
+		}
+
+		orch := NewOrchestrator(cfg, qs, ss, runner, &fakeEventLog{}, &fakeLocker{}, &fakeClock{}, &fakeSleeper{}).
+			WithErrorLogger(errLogger)
+
+		err := orch.Run(context.Background())
+		if err != nil {
+			t.Fatalf("expected clean finish (nil err) despite prompt failure, got: %v", err)
+		}
+
+		// Execution order: 1 (fail), 2 (succeed), 1 (retry fail)
+		expectedOrder := []int{1, 2, 1}
+		if !reflect.DeepEqual(promptExecutionOrder, expectedOrder) {
+			t.Errorf("execution order got %v, want %v", promptExecutionOrder, expectedOrder)
+		}
+
+		// Prompt 1 failed after retry; Prompt 2 succeeded; queue finished cleanly
+		if ss.state.Records[0].Status != domain.StatusFailed {
+			t.Errorf("prompt 1 status got %s, want failed", ss.state.Records[0].Status)
+		}
+		if !ss.state.Records[0].RetriedAtEnd {
+			t.Errorf("expected RetriedAtEnd=true on prompt 1")
+		}
+		if ss.state.Records[1].Status != domain.StatusSucceeded {
+			t.Errorf("prompt 2 status got %s, want succeeded", ss.state.Records[1].Status)
+		}
+
+		// Verify errors logged
+		if len(errLogger.entries) < 2 {
+			t.Fatalf("expected at least 2 error log entries for prompt 1 attempts, got %d", len(errLogger.entries))
 		}
 	})
 }

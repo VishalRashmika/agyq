@@ -200,8 +200,11 @@ func TestStatus_FailedPromptDiagnostics(t *testing.T) {
 	if !strings.Contains(out, "Failed Prompts:") {
 		t.Errorf("expected 'Failed Prompts:' in output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#2 [attempt 1]: fatal execution failure: invalid model selection") {
+	if !strings.Contains(out, "#2 [attempt 1]") || !strings.Contains(out, "fatal execution failure: invalid model selection") {
 		t.Errorf("expected failure detail in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[deferred for retry at end of queue]") {
+		t.Errorf("expected deferred retry tag in output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Transcript: .agyq/transcripts/0002-a1.log") {
 		t.Errorf("expected transcript path in output, got:\n%s", out)

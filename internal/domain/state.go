@@ -54,6 +54,7 @@ type PromptRecord struct {
 	Attempts           []Attempt    `json:"attempts"`
 	Checkpoint         string       `json:"checkpoint,omitempty"` // git ref/sha created before first attempt
 	LastConversationID string       `json:"last_conversation_id,omitempty"`
+	RetriedAtEnd       bool         `json:"retried_at_end,omitempty"`
 	UpdatedAt          time.Time    `json:"updated_at"`
 }
 
@@ -228,6 +229,13 @@ type WaitInfo struct {
 // NextRunnable finds the next prompt eligible for execution (F-030).
 // Never returns a prompt if any prompt is already running (P-1 max concurrency == 1).
 func NextRunnable(s *RunState, now time.Time) (*PromptRecord, WaitInfo) {
+	return NextRunnableWithRetry(s, now, false)
+}
+
+// NextRunnableWithRetry finds the next prompt eligible for execution.
+// If allowFailedRetry is true, failed prompts that have not yet had their end-of-queue
+// retry (!rec.RetriedAtEnd) will be selected after all pending, interrupted, and waiting_limit prompts.
+func NextRunnableWithRetry(s *RunState, now time.Time, allowFailedRetry bool) (*PromptRecord, WaitInfo) {
 	if s == nil {
 		return nil, WaitInfo{}
 	}
@@ -254,10 +262,21 @@ func NextRunnable(s *RunState, now time.Time) (*PromptRecord, WaitInfo) {
 		}
 	}
 
+	// Pass 1: Pending, Interrupted, WaitingLimit
 	for i := range s.Records {
 		rec := &s.Records[i]
 		if rec.Status == StatusPending || rec.Status == StatusInterrupted || rec.Status == StatusWaitingLimit {
 			return rec, WaitInfo{}
+		}
+	}
+
+	// Pass 2: Failed prompts deferred for end-of-queue retry
+	if allowFailedRetry {
+		for i := range s.Records {
+			rec := &s.Records[i]
+			if rec.Status == StatusFailed && !rec.RetriedAtEnd {
+				return rec, WaitInfo{}
+			}
 		}
 	}
 

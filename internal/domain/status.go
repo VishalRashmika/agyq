@@ -49,7 +49,7 @@ func Transition(from, to Status) error {
 			return nil
 		}
 	case StatusFailed:
-		if to == StatusPending {
+		if to == StatusPending || to == StatusRunning {
 			return nil
 		}
 	case StatusSucceeded, StatusSkipped:

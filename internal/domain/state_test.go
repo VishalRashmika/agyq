@@ -301,4 +301,45 @@ func TestNextRunnable(t *testing.T) {
 			t.Fatalf("expected nil prompt and false wait, got rec=%v, wait=%+v", rec, wait)
 		}
 	})
+
+	t.Run("failed prompt deferred until end of queue when allowFailedRetry is true", func(t *testing.T) {
+		s := &RunState{
+			Records: []PromptRecord{
+				{Number: 1, Status: StatusFailed, RetriedAtEnd: false},
+				{Number: 2, Status: StatusPending},
+				{Number: 3, Status: StatusPending},
+			},
+		}
+
+		// Pass 1: prompt 2 should be chosen first, skipping failed prompt 1
+		rec, wait := NextRunnableWithRetry(s, now, true)
+		if wait.ShouldWait || rec == nil || rec.Number != 2 {
+			t.Fatalf("expected prompt 2, got %v", rec)
+		}
+
+		// Simulate prompt 2 succeeded
+		s.Records[1].Status = StatusSucceeded
+
+		// Next should be prompt 3, still skipping failed prompt 1
+		rec, wait = NextRunnableWithRetry(s, now, true)
+		if wait.ShouldWait || rec == nil || rec.Number != 3 {
+			t.Fatalf("expected prompt 3, got %v", rec)
+		}
+
+		// Simulate prompt 3 succeeded
+		s.Records[2].Status = StatusSucceeded
+
+		// Pass 2: now that all pending are done, prompt 1 should be picked for retry
+		rec, wait = NextRunnableWithRetry(s, now, true)
+		if wait.ShouldWait || rec == nil || rec.Number != 1 {
+			t.Fatalf("expected prompt 1 for end-of-queue retry, got %v", rec)
+		}
+
+		// Once marked RetriedAtEnd = true, it should not be returned again
+		s.Records[0].RetriedAtEnd = true
+		rec, wait = NextRunnableWithRetry(s, now, true)
+		if rec != nil || wait.ShouldWait {
+			t.Fatalf("expected nil once retry exhausted, got %v", rec)
+		}
+	})
 }

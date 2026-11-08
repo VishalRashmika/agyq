@@ -434,18 +434,20 @@ func (a *App) runRun(args []string, stdout, stderr io.Writer) int {
 		case "--on-failure":
 			if i+1 < len(args) {
 				policy := application.FailurePolicy(args[i+1])
-				if policy != application.FailureStop && policy != application.FailureContinue {
-					fmt.Fprintf(stderr, "agyq run: invalid --on-failure policy %q (must be stop or continue)\n", args[i+1])
+				if policy != application.FailureStop && policy != application.FailureContinue && policy != application.FailureRetryAtEnd {
+					fmt.Fprintf(stderr, "agyq run: invalid --on-failure policy %q (must be retry-at-end, continue, or stop)\n", args[i+1])
 					return ExitUsage
 				}
 				onFailureOverride = policy
 				i++
 			} else {
-				fmt.Fprintln(stderr, "agyq run: --on-failure requires a policy (stop or continue)")
+				fmt.Fprintln(stderr, "agyq run: --on-failure requires a policy (retry-at-end, continue, or stop)")
 				return ExitUsage
 			}
 		case "--continue-on-failure":
 			onFailureOverride = application.FailureContinue
+		case "--stop-on-failure":
+			onFailureOverride = application.FailureStop
 		default:
 			fmt.Fprintf(stderr, "agyq run: unknown flag %q\n", args[i])
 			return ExitUsage
@@ -698,14 +700,20 @@ func (a *App) runStatus(args []string, stdout, stderr io.Writer) int {
 					transcript = lastAtt.TranscriptPath
 				}
 			}
-			fmt.Fprintf(stdout, "  #%d [attempt %d]: %s\n", fp.Number, attemptN, errMsg)
+			tag := ""
+			if !fp.RetriedAtEnd {
+				tag = " [deferred for retry at end of queue]"
+			} else {
+				tag = " [retry exhausted]"
+			}
+			fmt.Fprintf(stdout, "  #%d [attempt %d]%s: %s\n", fp.Number, attemptN, tag, errMsg)
 			if transcript != "" {
 				fmt.Fprintf(stdout, "      Transcript: %s\n", transcript)
 			}
 		}
 		if hasPendingAfterFailure {
 			fmt.Fprintln(stdout, "\nNotice: Queue halted on failure; subsequent prompts remain in pending status.")
-			fmt.Fprintln(stdout, "To resume: run 'agyq retry <number>' or 'agyq skip <number>', or set \"on_failure\": \"continue\" in agyq.json.")
+			fmt.Fprintln(stdout, "To resume: run 'agyq retry <number>' or 'agyq skip <number>', or run with default \"on_failure\": \"retry-at-end\".")
 		}
 		fmt.Fprintf(stdout, "Diagnostic error log: %s\n", filepath.Join(stateDir, "errors.log"))
 	}
@@ -1541,7 +1549,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  version               print version")
 	fmt.Fprintln(w, "  doctor [--config path] [--queue path] run preflight environment checks")
 	fmt.Fprintln(w, "  plan [--config path] [--dry-run] [queue-file] parse queue and preview plan")
-	fmt.Fprintln(w, "  run [--config path] [--on-failure stop|continue] start sequential queue orchestrator")
+	fmt.Fprintln(w, "  run [--config path] [--on-failure retry-at-end|continue|stop] start sequential queue orchestrator")
 	fmt.Fprintln(w, "  status [--json]       display queue status and recent events")
 	fmt.Fprintln(w, "  errors [--tail N]     display recent error log entries")
 	fmt.Fprintln(w, "  pause                 pause queue between prompts")

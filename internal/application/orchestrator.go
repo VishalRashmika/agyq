@@ -192,7 +192,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		}
 
 		now := o.clock.Now()
-		rec, wait := domain.NextRunnable(state, now)
+		rec, wait := domain.NextRunnableWithRetry(state, now, o.cfg.OnFailure == FailureRetryAtEnd)
 		if wait.ShouldWait {
 			if wait.Until.After(now) {
 				waitDur := wait.Until.Sub(now)
@@ -256,7 +256,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunState, rec *domain.PromptRecord, promptBody string) error {
 	mode := domain.RunFresh
 	preamble := ""
-	if rec.Status == domain.StatusInterrupted {
+	if rec.Status == domain.StatusFailed {
+		rec.RetriedAtEnd = true
+		mode = domain.RunResume
+		preamble = domain.FailedRetryPreamble(*rec)
+		o.emitEvent(ctx, "prompt.retry_at_end", rec.Number, fmt.Sprintf("Retrying previously failed prompt #%d at end of queue", rec.Number), nil)
+	} else if rec.Status == domain.StatusInterrupted {
 		maxResumes := o.cfg.MaxResumes
 		if maxResumes <= 0 {
 			maxResumes = 5
@@ -293,6 +298,9 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 			}
 			if o.cfg.OnFailure == FailureStop {
 				return ErrQueueHalted
+			}
+			if o.cfg.OnFailure == FailureRetryAtEnd && !rec.RetriedAtEnd {
+				o.emitEvent(ctx, "prompt.deferred", rec.Number, fmt.Sprintf("Prompt #%d failed (too_many_interruptions); deferred for retry at end of queue", rec.Number), map[string]any{"reason": "too_many_interruptions"})
 			}
 			return nil
 		}
@@ -490,6 +498,9 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 		if o.cfg.OnFailure == FailureStop {
 			return ErrQueueHalted
 		}
+		if o.cfg.OnFailure == FailureRetryAtEnd && !rec.RetriedAtEnd {
+			o.emitEvent(ctx, "prompt.deferred", rec.Number, fmt.Sprintf("Prompt #%d failed; deferred for retry at end of queue", rec.Number), map[string]any{"reason": reason})
+		}
 		return nil
 
 	case domain.OutcomeFatal:
@@ -501,6 +512,9 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 		o.emitEvent(ctx, "prompt.failed", rec.Number, fmt.Sprintf("Prompt #%d failed (fatal): %s", rec.Number, reason), nil)
 		if o.cfg.OnFailure == FailureStop {
 			return ErrQueueHalted
+		}
+		if o.cfg.OnFailure == FailureRetryAtEnd && !rec.RetriedAtEnd {
+			o.emitEvent(ctx, "prompt.deferred", rec.Number, fmt.Sprintf("Prompt #%d failed; deferred for retry at end of queue", rec.Number), map[string]any{"reason": reason})
 		}
 		return nil
 
@@ -585,6 +599,9 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 			if o.cfg.OnFailure == FailureStop {
 				return ErrQueueHalted
 			}
+			if o.cfg.OnFailure == FailureRetryAtEnd && !rec.RetriedAtEnd {
+				o.emitEvent(ctx, "prompt.deferred", rec.Number, fmt.Sprintf("Prompt #%d failed (limit_unresolved); deferred for retry at end of queue", rec.Number), map[string]any{"reason": "limit_unresolved"})
+			}
 			return nil
 		}
 
@@ -619,6 +636,9 @@ func (o *Orchestrator) executePromptTurn(ctx context.Context, state *domain.RunS
 		_ = o.stateStore.Save(ctx, state)
 		if o.cfg.OnFailure == FailureStop {
 			return ErrQueueHalted
+		}
+		if o.cfg.OnFailure == FailureRetryAtEnd && !rec.RetriedAtEnd {
+			o.emitEvent(ctx, "prompt.deferred", rec.Number, fmt.Sprintf("Prompt #%d failed; deferred for retry at end of queue", rec.Number), nil)
 		}
 		return nil
 	}
@@ -815,6 +835,7 @@ func (o *Orchestrator) applyControlCommand(ctx context.Context, state *domain.Ru
 			target.Status = domain.StatusPending
 			target.Attempts = nil
 			target.LastConversationID = ""
+			target.RetriedAtEnd = false
 			target.UpdatedAt = now
 			if state.Pause != nil && state.Pause.PromptNumber == target.Number {
 				state.Pause = nil

@@ -33,6 +33,7 @@ func TestStatusTransition(t *testing.T) {
 		{StatusWaitingLimit, StatusRunning},
 		{StatusWaitingLimit, StatusSkipped},
 		{StatusFailed, StatusPending},
+		{StatusFailed, StatusRunning},
 		// Self transitions
 		{StatusPending, StatusPending},
 		{StatusRunning, StatusRunning},

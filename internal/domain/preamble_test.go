@@ -45,3 +45,23 @@ unless they are clearly broken.`
 		t.Errorf("Expected agyq/cp-42 in preamble, got: %s", preamble2)
 	}
 }
+
+func TestFailedRetryPreamble(t *testing.T) {
+	rec := domain.PromptRecord{
+		Number: 3,
+		Attempts: []domain.Attempt{
+			{N: 1, Error: "compilation error in main.go"},
+		},
+	}
+
+	pre := domain.FailedRetryPreamble(rec)
+	if !strings.Contains(pre, "attempt 1") {
+		t.Errorf("expected attempt 1 in preamble, got: %s", pre)
+	}
+	if !strings.Contains(pre, "compilation error in main.go") {
+		t.Errorf("expected error string in preamble, got: %s", pre)
+	}
+	if !strings.Contains(pre, "agyq/cp-3") {
+		t.Errorf("expected agyq/cp-3 in preamble, got: %s", pre)
+	}
+}

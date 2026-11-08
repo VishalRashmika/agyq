@@ -374,11 +374,11 @@ func ParseConfig(data []byte, baseDir string) (*application.Config, error) {
 	if raw.OnFailure != nil {
 		policy := application.FailurePolicy(*raw.OnFailure)
 		switch policy {
-		case application.FailureStop, application.FailureContinue:
+		case application.FailureRetryAtEnd, application.FailureContinue, application.FailureStop:
 			cfg.OnFailure = policy
 		default:
-			return nil, fmt.Errorf("invalid on_failure policy %q (must be %q or %q)",
-				*raw.OnFailure, application.FailureStop, application.FailureContinue)
+			return nil, fmt.Errorf("invalid on_failure policy %q (must be %q, %q, or %q)",
+				*raw.OnFailure, application.FailureRetryAtEnd, application.FailureContinue, application.FailureStop)
 		}
 	}
 

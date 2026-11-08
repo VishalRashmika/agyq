@@ -77,12 +77,13 @@ agyq plan [--config <path>] [--json]
 Runs pending prompts sequentially until the queue completes, an unrecoverable failure occurs, or a pause is requested.
 
 ```bash
-agyq run [--config <path>] [--on-failure stop|continue] [--continue-on-failure]
+agyq run [--config <path>] [--on-failure retry-at-end|continue|stop] [--continue-on-failure] [--stop-on-failure]
 ```
 
 - **Flags:**
-  - `--on-failure <stop|continue>`: Policy when a prompt fails. `stop` (default) halts the orchestrator; `continue` records the failure and moves to the next pending prompt.
+  - `--on-failure <retry-at-end|continue|stop>`: Policy when a prompt fails. `retry-at-end` (default) defers the failed prompt, continues with remaining prompts, and retries the failed prompt once at the end of the queue; `continue` records the failure and moves immediately to the next prompt; `stop` halts the orchestrator.
   - `--continue-on-failure`: Shortcut for `--on-failure continue`.
+  - `--stop-on-failure`: Shortcut for `--on-failure stop`.
 - **Behavior:**
   - Checks git repository status.
   - Creates git checkpoint `agyq/cp-N` before each prompt.

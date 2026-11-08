@@ -28,7 +28,7 @@ func DefaultAgyqConfigJSON(permissionMode string) string {
 	}
 	return fmt.Sprintf(`{
   "recovery": "resume",
-  "on_failure": "stop",
+  "on_failure": "retry-at-end",
   "prompt_timeout": "90m",
   "agy": {
     "binary": "agy",
