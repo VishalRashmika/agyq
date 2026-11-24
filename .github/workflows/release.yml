@@ -53,12 +53,38 @@ jobs:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CLOUDSMITH_ORG: ${{ vars.CLOUDSMITH_ORGANIZATION }}
         run: |
+          # 1. Resolve Cloudsmith namespace / owner
           OWNER="${CLOUDSMITH_ORG}"
           if [ -z "$OWNER" ]; then
-            OWNER=$(cloudsmith whoami -F json | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('slug') or data.get('name') or 'vishalrashmika')")
+            ORGS_RESP=$(curl -s -H "Authorization: token ${CLOUDSMITH_API_KEY}" https://api.cloudsmith.io/orgs/)
+            OWNER=$(echo "$ORGS_RESP" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data[0]['slug'] if isinstance(data, list) and len(data) > 0 and 'slug' in data[0] else '')" 2>/dev/null || true)
           fi
-          echo "Publishing deb packages to Cloudsmith: $OWNER/agyq"
 
+          if [ -z "$OWNER" ]; then
+            USER_RESP=$(curl -s -H "Authorization: token ${CLOUDSMITH_API_KEY}" https://api.cloudsmith.io/user/self/)
+            OWNER=$(echo "$USER_RESP" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('slug', ''))" 2>/dev/null || true)
+          fi
+
+          if [ -z "$OWNER" ]; then
+            OWNER="vishalrashmika"
+          fi
+
+          echo "Target Cloudsmith owner: $OWNER"
+
+          # 2. Ensure repository 'agyq' exists under the owner
+          echo "Ensuring public repository 'agyq' exists in Cloudsmith namespace '$OWNER'..."
+          cat << 'EOF' > /tmp/repo-config.json
+          {
+            "name": "agyq",
+            "description": "APT and package repository for agyq",
+            "repository_type_str": "Public",
+            "slug": "agyq"
+          }
+          EOF
+
+          cloudsmith repos create "$OWNER" /tmp/repo-config.json 2>&1 || true
+
+          # 3. Upload .deb packages
           shopt -s nullglob
           deb_files=(dist/*.deb dist/*/*.deb)
           if [ ${#deb_files[@]} -eq 0 ]; then
