@@ -40,8 +40,13 @@ sudo -iu agyq agy          # complete login, then /exit
 # 4. Target repo (must be a git repo)
 sudo -iu agyq bash -c 'mkdir -p ~/work/myproject && cd ~/work/myproject && git init && agyq init'
 
-# 5. Install agyq (static binary)
-sudo install -m 0755 agyq /usr/local/bin/agyq
+# 5. Install agyq
+#    Option A: via APT repository (Recommended)
+curl -1sLf 'https://dl.cloudsmith.io/public/vishalrashmika/agyq/setup.deb.sh' | sudo -E bash
+sudo apt update && sudo apt install agyq
+
+#    Option B: manual static binary install
+#    sudo install -m 0755 agyq /usr/local/bin/agyq
 
 # 6. Automatic service install
 #    agyq service install auto-detects user, home, resolved PATH, and working directory:
@@ -108,7 +113,20 @@ You may append prompts to `queue.md` while it runs; edits to already-started pro
 
 Because `agyq` compiles to a single standalone static binary and preserves all state in `.agyq/`, updating it does **not** require reinstalling system packages, deleting state, or re-authenticating `agy`.
 
-### Option A: If building inside the Proxmox container (Fastest)
+### Option A: If installed via APT (Fastest & Zero Compilation)
+
+```bash
+# 1. Update package lists and upgrade agyq
+sudo apt update
+sudo apt install --only-upgrade agyq
+
+# 2. Restart service and verify
+sudo systemctl restart agyq
+agyq version
+agyq status
+```
+
+### Option B: If building inside the Proxmox container
 
 If Git and Go are available on the container/guest:
 

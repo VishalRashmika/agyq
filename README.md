@@ -103,9 +103,37 @@ agy
 
 ## Installation
 
-### Build from Source
+### Option 1: Install via APT (Debian, Ubuntu, Proxmox LXC)
+
+Add the official APT repository and install `agyq` with automatic package updates:
+
 ```bash
-git clone https://github.com/google/agyq.git
+# 1. Add repository & trusted GPG key automatically
+curl -1sLf 'https://dl.cloudsmith.io/public/vishalrashmika/agyq/setup.deb.sh' | sudo -E bash
+
+# 2. Update and install agyq
+sudo apt update
+sudo apt install agyq
+```
+
+To update `agyq` in the future:
+```bash
+sudo apt update && sudo apt install --only-upgrade agyq
+```
+
+### Option 2: Download Standalone .deb Package
+
+Download the `.deb` package directly from [GitHub Releases](https://github.com/VishalRashmika/agyq/releases):
+
+```bash
+curl -LO https://github.com/VishalRashmika/agyq/releases/latest/download/agyq_linux_amd64.deb
+sudo apt install ./agyq_linux_amd64.deb
+```
+
+### Option 3: Build from Source
+
+```bash
+git clone https://github.com/VishalRashmika/agyq.git
 cd agyq
 make build
 sudo install -m 0755 agyq /usr/local/bin/agyq

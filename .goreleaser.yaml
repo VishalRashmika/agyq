@@ -1,0 +1,63 @@
+version: 2
+project_name: agyq
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agyq
+    main: ./cmd/agyq
+    binary: agyq
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X agyq/internal/presentation.Version={{ .Version }}
+      - -X agyq/internal/presentation.Commit={{ .ShortCommit }}
+
+nfpms:
+  - id: agyq-deb
+    package_name: agyq
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: "Vishal Rashmika"
+    homepage: "https://github.com/VishalRashmika/agyq"
+    maintainer: "Vishal Rashmika <vishal.rashmika.perera@gmail.com>"
+    description: "Sequential, crash-safe prompt queue runner for the Antigravity CLI (agy)"
+    license: "GPL-3.0"
+    formats:
+      - deb
+    bindir: /usr/bin
+    contents:
+      - src: deploy/agyq.service
+        dst: /lib/systemd/system/agyq.service
+      - src: deploy/agyq.example.json
+        dst: /etc/agyq/agyq.example.json
+        type: "config"
+
+archives:
+  - id: tarball
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - deploy/agyq.example.json
+      - deploy/agyq.service
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

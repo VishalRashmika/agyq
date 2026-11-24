@@ -1,0 +1,72 @@
+name: Release & APT Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, Release & Publish APT
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        if: env.CLOUDSMITH_API_KEY != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+
+      - name: Install Cloudsmith CLI
+        if: env.CLOUDSMITH_API_KEY != ''
+        run: pip install --upgrade cloudsmith-cli
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+
+      - name: Push .deb packages to Cloudsmith APT repository
+        if: env.CLOUDSMITH_API_KEY != ''
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CLOUDSMITH_ORG: ${{ vars.CLOUDSMITH_ORGANIZATION }}
+        run: |
+          OWNER="${CLOUDSMITH_ORG}"
+          if [ -z "$OWNER" ]; then
+            OWNER=$(cloudsmith whoami -F json | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('slug') or data.get('name') or 'vishalrashmika')")
+          fi
+          echo "Publishing deb packages to Cloudsmith: $OWNER/agyq"
+
+          shopt -s nullglob
+          deb_files=(dist/*.deb dist/*/*.deb)
+          if [ ${#deb_files[@]} -eq 0 ]; then
+            echo "No .deb packages found in dist/"
+            exit 1
+          fi
+
+          for deb in "${deb_files[@]}"; do
+            echo "Pushing $deb to $OWNER/agyq/any-distro/any-version..."
+            cloudsmith push deb "$OWNER/agyq/any-distro/any-version" "$deb" --no-wait-for-sync
+          done

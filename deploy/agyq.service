@@ -1,6 +1,6 @@
 [Unit]
 Description=agyq - sequential prompt queue runner for Antigravity CLI
-Documentation=https://github.com/google/agyq
+Documentation=https://github.com/VishalRashmika/agyq
 After=network-online.target time-sync.target
 Wants=network-online.target time-sync.target
 
