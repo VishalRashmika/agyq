@@ -42,7 +42,7 @@ sudo -iu agyq bash -c 'mkdir -p ~/work/myproject && cd ~/work/myproject && git i
 
 # 5. Install agyq
 #    Option A: via APT repository (Recommended)
-curl -1sLf 'https://dl.cloudsmith.io/public/vishalrashmika/agyq/setup.deb.sh' | sudo -E bash
+curl -1sLf 'https://dl.cloudsmith.io/public/agyq/agyq/setup.deb.sh' | sudo -E bash
 sudo apt update && sudo apt install agyq
 
 #    Option B: manual static binary install

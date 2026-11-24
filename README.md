@@ -109,7 +109,7 @@ Add the official APT repository and install `agyq` with automatic package update
 
 ```bash
 # 1. Add repository & trusted GPG key automatically
-curl -1sLf 'https://dl.cloudsmith.io/public/vishalrashmika/agyq/setup.deb.sh' | sudo -E bash
+curl -1sLf 'https://dl.cloudsmith.io/public/agyq/agyq/setup.deb.sh' | sudo -E bash
 
 # 2. Update and install agyq
 sudo apt update

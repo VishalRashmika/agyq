@@ -53,23 +53,9 @@ jobs:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CLOUDSMITH_ORG: ${{ vars.CLOUDSMITH_ORGANIZATION }}
         run: |
-          # 1. Resolve Cloudsmith namespace / owner
-          OWNER="${CLOUDSMITH_ORG}"
-          if [ -z "$OWNER" ]; then
-            ORGS_RESP=$(curl -s -H "Authorization: token ${CLOUDSMITH_API_KEY}" https://api.cloudsmith.io/orgs/)
-            OWNER=$(echo "$ORGS_RESP" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data[0]['slug'] if isinstance(data, list) and len(data) > 0 and 'slug' in data[0] else '')" 2>/dev/null || true)
-          fi
-
-          if [ -z "$OWNER" ]; then
-            USER_RESP=$(curl -s -H "Authorization: token ${CLOUDSMITH_API_KEY}" https://api.cloudsmith.io/user/self/)
-            OWNER=$(echo "$USER_RESP" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('slug', ''))" 2>/dev/null || true)
-          fi
-
-          if [ -z "$OWNER" ]; then
-            OWNER="vishalrashmika"
-          fi
-
-          echo "Target Cloudsmith owner: $OWNER"
+          # 1. Resolve Cloudsmith namespace / owner (default to 'agyq')
+          OWNER="${CLOUDSMITH_ORG:-agyq}"
+          echo "Target Cloudsmith organization/owner: $OWNER"
 
           # 2. Ensure repository 'agyq' exists under the owner
           echo "Ensuring public repository 'agyq' exists in Cloudsmith namespace '$OWNER'..."
