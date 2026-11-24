@@ -1,5 +1,11 @@
 # agyq
 
+[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![Zero Dependencies](https://img.shields.io/badge/Dependencies-Standard%20Library%20Only-brightgreen)](#)
+[![Crash Safe](https://img.shields.io/badge/Recovery-Git%20Checkpoints-orange)](#)
+[![Headless Daemon](https://img.shields.io/badge/Deployment-systemd%20%7C%20Proxmox-purple)](#)
+
 Sequential, crash-safe prompt queue runner for the **Antigravity CLI (`agy`)**, engineered for autonomous, unattended execution overnight on a local workstation, Linux VM, or home server.
 
 > **Status:** Production-ready (`v1.0.0`). Standard library only (zero external dependencies).
@@ -12,15 +18,57 @@ Running autonomous coding agents unattended often encounters common points of fa
 - **Context degradation:** Long multi-turn conversations degrade in quality, hit context limits, and lose track of earlier constraints.
 - **Power cuts & crashes:** An unexpected reboot or process termination can corrupt uncommitted progress and leave state inconsistent.
 - **API rate limits:** Quota exhaustion and session windows halt execution unexpectedly.
+- **Single-prompt queue halt:** A single broken test or compilation failure aborts the entire overnight run, stranding all downstream tasks in pending.
 - **Silent tool denials:** In headless mode, commands requiring confirmation are auto-denied by default, causing false successes where the agent exits in seconds without writing code.
 
-`agyq` provides a robust runner to solve these problems:
+### Manual CLI vs. `agyq` Daemon
+
+| Failure Mode | Conventional Manual CLI | With `agyq` Daemon |
+|:---|:---|:---|
+| **Multi-task fatigue** | Conversation grows huge, hallucinates, degrades | Fresh isolated conversation per prompt with repository state |
+| **Quota limit (429 / Reset)** | Process crashes or hangs; night wasted | Automatically detects reset time, sleeps, and resumes |
+| **Middle-of-the-night crash** | Partial files left uncommitted; repo broken | Instant Git rollback & contextual resume preamble |
+| **Mid-queue prompt failure** | Halts entire queue; downstream prompts stranded | **Deferred to end of queue** (`retry-at-end`); remaining tasks complete |
+| **Headless / Server deployment** | Requires manual terminal babysitting | Native `systemd` unit for Proxmox, LXC, and Linux VMs |
+| **Errors & Visibility** | Buried in stdout/stderr terminal noise | Dedicated `.agyq/errors.log` & `agyq errors` CLI viewer |
+
+### Core Architectural Features
 
 1. **Prompt Isolation:** Each prompt runs in a **fresh** agent conversation. Long-term architectural context lives in repository files (code, tests, and documentation), avoiding conversational drift.
 2. **Git Checkpoints:** Automatically creates a Git checkpoint commit (`agyq/cp-N`) before each prompt and a completion commit (`agyq/completed`) after the queue finishes. If interrupted, `agyq` resumes work safely without repeating completed tasks.
 3. **Quota Resilience:** Intercepts rate limits and quota resets, pauses execution until quota is restored, and resumes automatically.
-4. **False-Success Guard:** Inspects the CLI output for auto-denied actions (`denied_actions`) and immediately flags the prompt as failed and retries, rather than falsely claiming success.
-5. **Zero External Dependencies:** Built entirely with the Go standard library, ensuring zero dependency bloat and instant compilation.
+4. **Deferred Retry-at-End (Default Failure Policy):** If a prompt fails, `agyq` skips it for the moment, continues running all remaining prompts, and returns to retry the failed prompt at the end of the queue with contextual diagnostics.
+5. **False-Success Guard:** Inspects the CLI output for auto-denied actions (`denied_actions`) and immediately flags the prompt as failed and retries, rather than falsely claiming success.
+6. **Dedicated Error Diagnostics:** Appends detailed diagnostic records (attempt, exit code, transcript path, stderr tail) directly to `.agyq/errors.log`, viewable anytime with `agyq errors`.
+7. **Zero External Dependencies:** Built entirely with the Go standard library, ensuring zero dependency bloat and instant compilation.
+
+---
+
+## Architecture Flow
+
+```mermaid
+flowchart TD
+    Q["queue.md (Numbered Tasks)"] --> O["agyq Orchestrator Daemon"]
+    
+    subgraph Execution ["Sequential Execution Loop"]
+        O --> CP["Create Git Checkpoint (agyq/cp-N)"]
+        CP --> ISO["Launch Isolated Antigravity CLI Turn"]
+        ISO --> CLAS{"Classifier"}
+        
+        CLAS -->|Success| SUC["Mark Succeeded"]
+        CLAS -->|Rate Limit / 429| LIM["Auto-Pause Until Reset & Resume"]
+        CLAS -->|Error / Crash| DEF["Defer Prompt & Continue Queue"]
+    end
+    
+    SUC --> NEXT["Next Pending Prompt"]
+    DEF --> NEXT
+    NEXT -->|More Prompts?| CP
+    NEXT -->|All Done?| RETRY{"Any Deferred Prompts?"}
+    
+    RETRY -->|Yes| RRUN["Retry Deferred Prompts (Pass 2)"]
+    RETRY -->|No| FIN["git tag agyq/completed & Clean Exit"]
+    RRUN --> FIN
+```
 
 ---
 
@@ -83,9 +131,9 @@ agyq init
 
 This scaffolds and configures everything needed:
 - **`queue.md`**: Starter prompt queue with formatting examples (`# #1 Title`).
-- **`agyq.json`**: Pre-configured with `"permission_mode": "dangerously-skip-permissions"` by default, allowing headless tool execution (terminal commands, file creation, and edits) without human confirmation prompts.
+- **`agyq.json`**: Pre-configured with `"permission_mode": "dangerously-skip-permissions"` and `"on_failure": "retry-at-end"` by default, allowing headless tool execution (terminal commands, file creation, and edits) without human confirmation prompts.
 - **`AGENTS.md`**: Autonomous worker guidelines auto-loaded by `agy`, instructing the agent to always modify files directly and run tests rather than merely explaining solutions in text.
-- **`.gitignore`**: Automatically appends `.agyq/` so runtime states, events, and transcripts are never committed to Git.
+- **`.gitignore`**: Automatically appends `.agyq/`, `queue.md`, cache files, and logs so runtime state is never accidentally committed to Git.
 - **Doctor Preflight**: Executes a 9-point diagnostic verifying the `agy` binary, login credentials, and repository readiness.
 
 ---
@@ -101,6 +149,11 @@ agyq plan
 # Option A: Run in foreground (interactive terminal or tmux)
 agyq run
 
+# Override failure policy if desired (default: retry-at-end)
+agyq run --on-failure retry-at-end   # Defer failures, finish queue, retry at end
+agyq run --on-failure continue       # Continue immediately without retry
+agyq run --on-failure stop           # Halt queue immediately on failure
+
 # Option B: Run as an unattended background service (systemd)
 sudo agyq service install    # Auto-detects user, working dir, and PATH
 sudo agyq service start      # Starts background runner
@@ -111,6 +164,12 @@ journalctl -u agyq -f        # Tails live execution log
 Monitor live status from any terminal:
 ```bash
 agyq status
+```
+
+Inspect error diagnostics:
+```bash
+agyq errors                  # View recent failures with transcripts and stderr
+agyq errors --tail 20        # Inspect last 20 error entries
 ```
 
 ---
@@ -170,6 +229,7 @@ agyq run
 | `agyq plan` | Previews prompt execution order and validates queue syntax |
 | `agyq run` | Runs prompts sequentially, checkpointing Git before each prompt |
 | `agyq status` | Displays queue progress, prompt states, retry attempts, and event stream |
+| `agyq errors` | Displays recent diagnostic errors, failure reasons, transcripts, and stderr tails |
 | `agyq doctor` | Comprehensive 9-step preflight diagnosis for CLI, Git, quota, and credentials |
 | `agyq pause` | Signals running queue to pause gracefully after current prompt completes |
 | `agyq resume` | Clears pause signal and resumes execution |
