@@ -10,6 +10,10 @@ Sequential, crash-safe prompt queue runner for the **Antigravity CLI (`agy`)**, 
 
 > **Status:** Production-ready (`v1.0.0`). Standard library only (zero external dependencies).
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/VishalRashmika/agyq/assets/agyq-demo.webp" alt="agyq Demo Walkthrough" width="100%">
+</p>
+
 ---
 
 ## Why `agyq`?
